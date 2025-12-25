@@ -2,6 +2,8 @@
 
 Classic Snake game implemented in vanilla JavaScript.
 
+**Play online:** https://bborbe.github.io/snake/
+
 ## Features
 
 - Smooth snake movement
