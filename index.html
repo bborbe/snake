@@ -357,7 +357,7 @@
       let state = {
         snake: [{ x: 15, y: 15 }],
         direction: DIR.RIGHT,
-        nextDirection: DIR.RIGHT,
+        directionQueue: [],
         food: null,
         score: 0,
         highScore: 0,
@@ -375,14 +375,22 @@
       }
 
       function spawnFood() {
-        let newFood;
-        let attempts = 0;
-        do {
-          newFood = randomPosition();
-          attempts++;
-        } while (attempts < 100 && state.snake.some(seg => seg.x === newFood.x && seg.y === newFood.y));
+        const occupied = new Set(state.snake.map(seg => `${seg.x},${seg.y}`));
+        const free = [];
+        for (let x = 0; x < GRID_SIZE; x++) {
+          for (let y = 0; y < GRID_SIZE; y++) {
+            if (!occupied.has(`${x},${y}`)) free.push({ x, y });
+          }
+        }
 
-        state.food = newFood;
+        // Board full: nothing left to eat
+        if (free.length === 0) {
+          state.food = null;
+          state.gameOver = true;
+          return;
+        }
+
+        state.food = free[Math.floor(Math.random() * free.length)];
       }
 
       function loadHighScore() {
@@ -399,7 +407,7 @@
           loadHighScore();
           state.snake = [{ x: 15, y: 15 }];
           state.direction = DIR.RIGHT;
-          state.nextDirection = DIR.RIGHT;
+          state.directionQueue = [];
           state.score = 0;
           state.speed = 1;
           state.gameOver = false;
@@ -409,11 +417,17 @@
         },
 
         setDirection(dir) {
-          // Prevent 180-degree turns
-          if (dir.x === -state.direction.x && dir.y === -state.direction.y) {
+          // Queue turns so quick key sequences are not lost between ticks
+          const queue = state.directionQueue;
+          const last = queue.length > 0 ? queue[queue.length - 1] : state.direction;
+
+          // Ignore repeats and 180-degree turns relative to the last queued direction
+          if (dir === last || (dir.x === -last.x && dir.y === -last.y)) {
             return;
           }
-          state.nextDirection = dir;
+          if (queue.length < 3) {
+            queue.push(dir);
+          }
         },
 
         setBoost(boosting) {
@@ -423,7 +437,9 @@
         update() {
           if (state.gameOver || state.isPaused) return;
 
-          state.direction = state.nextDirection;
+          if (state.directionQueue.length > 0) {
+            state.direction = state.directionQueue.shift();
+          }
 
           const head = state.snake[0];
           const newHead = {
@@ -438,8 +454,10 @@
             return;
           }
 
-          // Check self collision
-          if (state.snake.some(seg => seg.x === newHead.x && seg.y === newHead.y)) {
+          // Check self collision; the tail moves away this tick unless the snake grows
+          const willEat = newHead.x === state.food.x && newHead.y === state.food.y;
+          const body = willEat ? state.snake : state.snake.slice(0, -1);
+          if (body.some(seg => seg.x === newHead.x && seg.y === newHead.y)) {
             state.gameOver = true;
             return;
           }
@@ -447,7 +465,7 @@
           state.snake.unshift(newHead);
 
           // Check food collision
-          if (newHead.x === state.food.x && newHead.y === state.food.y) {
+          if (willEat) {
             state.score += 10;
             state.speed = Math.floor(state.score / 50) + 1;
 
@@ -591,8 +609,9 @@
     const renderer = createRenderer(canvas, gameState);
     const inputHandler = createInputHandler(gameState, restartGame);
 
-    let lastTime = 0;
+    let lastTime = null;
     let accumulator = 0;
+    let animationId = null;
 
     function gameLoop(timestamp) {
       const state = gameState.getState();
@@ -605,7 +624,10 @@
         return;
       }
 
-      if (!state.isPaused) {
+      if (state.isPaused || lastTime === null) {
+        // Do not count paused time (or the first frame) as elapsed game time
+        lastTime = timestamp;
+      } else {
         const deltaTime = timestamp - lastTime;
         lastTime = timestamp;
         accumulator += deltaTime;
@@ -618,7 +640,7 @@
         }
       }
 
-      requestAnimationFrame(gameLoop);
+      animationId = requestAnimationFrame(gameLoop);
     }
 
     function showGameOver(score) {
@@ -647,15 +669,17 @@
       document.getElementById('game-over').style.display = 'none';
       document.getElementById('pause-overlay').style.display = 'none';
       gameState.init();
-      lastTime = 0;
+      lastTime = null;
       accumulator = 0;
-      requestAnimationFrame(gameLoop);
+      // Cancel the running loop so a mid-game restart does not start a second one
+      if (animationId !== null) cancelAnimationFrame(animationId);
+      animationId = requestAnimationFrame(gameLoop);
     }
 
     // Start the game
     inputHandler.bindKeys();
     gameState.init();
-    requestAnimationFrame(gameLoop);
+    animationId = requestAnimationFrame(gameLoop);
   </script>
 </body>
 </html>
